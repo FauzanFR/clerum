@@ -1,33 +1,24 @@
-use ndarray::{Array1, Array2};
+use TensorClerum::{tensor1::PackedTensor1D, tensor2::PackedTensor2D};
 
-
-pub fn SGD(weights: &mut Vec<Array2<f32>>, biases:&mut Vec<Array1<f32>>, d_weights:&Vec<Array2<f32>>, d_biases:&Vec<Array1<f32>>, learning_rate:f32){
-    for ((w, dw), (b, db)) in weights
-    .iter_mut()
-    .zip(d_weights)
-    .zip(biases.iter_mut().zip(d_biases))
-    {
-        w.scaled_add(-learning_rate, dw);
-        b.scaled_add(-learning_rate, db);
+pub fn SGD(weights: &mut PackedTensor2D, biases:&mut PackedTensor1D, d_weights:&PackedTensor2D, d_biases:&PackedTensor1D, learning_rate:f32){
+    
+    for i in 0..weights.len(){
+        weights.get_mut(i).scaled_add(learning_rate, &d_weights.get(i));
+        biases.get_mut(i).scaled_add(learning_rate, &d_biases.get(i));
     }
 }
 pub struct Momentum{
-    Velocity_weights: Vec<Array2<f32>>,
-    Velocity_biases: Vec<Array1<f32>>,
+    Velocity_weights: PackedTensor2D,
+    Velocity_biases: PackedTensor1D,
     gamma:f32
 }
 
 impl Momentum{
 
-    pub fn init (weights: &mut Vec<Array2<f32>>, biases:&mut Vec<Array1<f32>>, gamma:f32) -> Self {
-        let mut Velocity_weights = Vec::new();
-        let mut Velocity_biases = Vec::new();
-        for (w, b) in weights
-        .iter_mut()
-        .zip(biases){
-            Velocity_weights.push(Array2::zeros(w.raw_dim()));
-            Velocity_biases.push(Array1::zeros(b.raw_dim()));
-        }
+    pub fn init (weights: &mut PackedTensor2D, biases:&mut PackedTensor1D, gamma:f32) -> Self {
+        let Velocity_weights = weights.copy_and_fill(0.0);
+        let Velocity_biases = biases.copy_and_fill(0.0);
+
         Self {
             Velocity_weights,
             Velocity_biases,
@@ -35,54 +26,43 @@ impl Momentum{
         }
     }
 
-    fn count_velocity (&mut self, d_weights:&Vec<Array2<f32>>, d_biases:&Vec<Array1<f32>>,learning_rate:f32){
-        for ((vw, dw), (vb, db)) in 
-        self.Velocity_weights.iter_mut().zip(d_weights.iter())
-        .zip(self.Velocity_biases.iter_mut().zip(d_biases.iter())){
+    fn count_velocity (&mut self, d_weights:&PackedTensor2D, d_biases:&PackedTensor1D,learning_rate:f32){
 
-            vw.mapv_inplace(|x| x * self.gamma);
-            vw.scaled_add(learning_rate, dw);
+        for i in 0..d_biases.len(){
+            let mut vw = self.Velocity_weights.get_mut(i);
+            vw *= self.gamma;
+            vw.scaled_add(learning_rate, &d_weights.get(i));
 
-            vb.mapv_inplace(|x| x * self.gamma);
-            vb.scaled_add(learning_rate, db);
+            let mut vb = self.Velocity_biases.get_mut(i);
+            vb *= self.gamma;
+            vb.scaled_add(learning_rate, &d_biases.get(i));
         }
     }
 
-    pub fn run (&mut self,weights: &mut Vec<Array2<f32>>, biases:&mut Vec<Array1<f32>>,
-        d_weights:&Vec<Array2<f32>>, d_biases:&Vec<Array1<f32>>,
+    pub fn run (&mut self,weights: &mut PackedTensor2D, biases:&mut PackedTensor1D,
+        d_weights:&PackedTensor2D, d_biases:&PackedTensor1D,
         learning_rate:f32)
         {
-
             self.count_velocity(d_weights, d_biases, learning_rate);
 
-            for ((w, vw), (b, vb)) in weights
-            .iter_mut()
-            .zip(self.Velocity_weights.iter())
-            .zip(biases.iter_mut().zip(self.Velocity_biases.iter())){
-
-                w.scaled_add(-1.0, &vw);
-                b.scaled_add(-1.0, &vb);
-        }
+            for i in 0..weights.len(){
+                weights.get_mut(i).scaled_add(-1.0, &self.Velocity_weights.get(i));
+                biases.get_mut(i).scaled_add(-1.0, &self.Velocity_biases.get(i));
+            }
     }
 }
 
 pub struct RMSprop{
-    cache_weights: Vec<Array2<f32>>,
-    cache_biases: Vec<Array1<f32>>,
+    cache_weights: PackedTensor2D,
+    cache_biases: PackedTensor1D,
     gamma:f32
 }
 
 impl  RMSprop {
-    pub fn init (weights: &mut Vec<Array2<f32>>, biases:&mut Vec<Array1<f32>>, gamma:f32) -> Self {
-        let mut cache_weights = Vec::new();
-        let mut cache_biases = Vec::new();
+    pub fn init (weights: &mut PackedTensor2D, biases:&mut PackedTensor1D, gamma:f32) -> Self {
+        let cache_weights = weights.copy_and_fill(0.0);
+        let cache_biases = biases.copy_and_fill(0.0);
 
-        for (w, b) in weights
-        .iter_mut()
-        .zip(biases){
-            cache_weights.push(Array2::zeros(w.raw_dim()));
-            cache_biases.push(Array1::zeros(b.raw_dim()));
-        }
         Self {
             cache_weights,
             cache_biases,
@@ -90,73 +70,75 @@ impl  RMSprop {
         }
     }
 
-    fn count_velocity (&mut self, d_weights:&Vec<Array2<f32>>, d_biases:&Vec<Array1<f32>>){
-        for ((vw, dw), (vb, db)) in
-        self.cache_weights.iter_mut().zip(d_weights.iter())
-        .zip(self.cache_biases.iter_mut().zip(d_biases.iter())){
+    fn count_velocity (&mut self, d_weights:&PackedTensor2D, d_biases:&PackedTensor1D){
 
-            for (v, g) in vw.iter_mut().zip(dw.iter()) {
+        for i in 0..d_biases.len(){
+            let mut vw = self.cache_weights.get_mut(i);
+            let dw = d_weights.get(i);
+            vw.zip_mut_with(&dw, |v, g| {
                 *v = self.gamma * *v + (1.0 - self.gamma) * g.powi(2);
-            }
+            });
 
-            for (v, g) in vb.iter_mut().zip(db.iter()) {
+            let mut vb = self.cache_biases.get_mut(i);
+            let db = d_biases.get(i);
+            vb.zip_mut_with(&db, |v, g| {
                 *v = self.gamma * *v + (1.0 - self.gamma) * g.powi(2);
-            }
-
-
+            });
         }
     }
     
-    pub fn run (&mut self,weights: &mut Vec<Array2<f32>>, biases:&mut Vec<Array1<f32>>,
-        d_weights:&Vec<Array2<f32>>, d_biases:&Vec<Array1<f32>>,
+    pub fn run (&mut self,weights: &mut PackedTensor2D, biases:&mut PackedTensor1D,
+        d_weights:&PackedTensor2D, d_biases:&PackedTensor1D,
         learning_rate:f32)
         {
             const EPSILON: f32 = 1e-7;
             self.count_velocity(d_weights, d_biases);
 
-            for (((w, vw), (b, vb)), (dw, db)) in
-            weights.iter_mut().zip(self.cache_weights.iter())
-            .zip(biases.iter_mut().zip(self.cache_biases.iter()))
-            .zip(d_weights.iter().zip(d_biases)){
+            for i in 0..weights.len(){
+                let mut w  = weights.get_mut(i);
+                let vw     = self.cache_weights.get(i);
+                let dw     = d_weights.get(i);
 
-                for ((param, v), grad) in w.iter_mut().zip(vw).zip(dw.iter()){
-                    *param -= learning_rate * grad / (v + EPSILON).sqrt();
-                }
+                ndarray::Zip::from(&mut w)
+                    .and(&vw)
+                    .and(&dw)
+                    .for_each(|param, &v, &grad| {
+                        *param -= learning_rate * grad / (v + EPSILON).sqrt();
+                    });
 
-                for ((param, v), grad) in b.iter_mut().zip(vb).zip(db.iter()){
-                    *param -= learning_rate * grad / (v + EPSILON).sqrt();
-                }
+                let mut b  = biases.get_mut(i);
+                let vb     = self.cache_biases.get(i);
+                let db     = d_biases.get(i);
+
+                // in-place elementwise update untuk biases
+                ndarray::Zip::from(&mut b)
+                    .and(&vb)
+                    .and(&db)
+                    .for_each(|param, &v, &grad| {
+                        *param -= learning_rate * grad / (v + EPSILON).sqrt();
+                    });
+            }
+
         }
-
-    }
 }
 
 pub struct  Adam{
-    momentum_weights: Vec<Array2<f32>>,
-    momentum_biases: Vec<Array1<f32>>,
-    Velocity_weights: Vec<Array2<f32>>,
-    Velocity_biases: Vec<Array1<f32>>,
+    momentum_weights: PackedTensor2D,
+    momentum_biases: PackedTensor1D,
+    Velocity_weights: PackedTensor2D,
+    Velocity_biases: PackedTensor1D,
     beta1:f32,
     beta2:f32,
     iterasi:i32
 }
 
 impl Adam {
-    pub fn init (weights: &mut Vec<Array2<f32>>, biases:&mut Vec<Array1<f32>>, beta1:f32, beta2:f32, iterasi:i32) -> Self {
+    pub fn init (weights: &mut PackedTensor2D, biases:&mut PackedTensor1D, beta1:f32, beta2:f32, iterasi:i32) -> Self {
 
-        let mut momentum_weights = Vec::new();
-        let mut momentum_biases = Vec::new();
-        let mut Velocity_weights = Vec::new();
-        let mut Velocity_biases = Vec::new();
-
-        for (w, b) in weights
-        .iter_mut()
-        .zip(biases){
-            momentum_weights.push(Array2::zeros(w.raw_dim()));
-            momentum_biases.push(Array1::zeros(b.raw_dim()));
-            Velocity_weights.push(Array2::zeros(w.raw_dim()));
-            Velocity_biases.push(Array1::zeros(b.raw_dim()));
-        }
+        let momentum_weights = weights.copy_and_fill(0.0);
+        let momentum_biases = biases.copy_and_fill(0.0);
+        let Velocity_weights = weights.copy_and_fill(0.0);
+        let Velocity_biases = biases.copy_and_fill(0.0);
 
         Self{
             momentum_weights,
@@ -169,34 +151,36 @@ impl Adam {
         }
     }
 
-    fn count_momentum_velocity (&mut self, d_weights:&Vec<Array2<f32>>, d_biases:&Vec<Array1<f32>>){
+    fn count_momentum_velocity (&mut self, d_weights:&PackedTensor2D, d_biases:&PackedTensor1D){
 
-        for (((mw, dw), (mb, db)),(vw, vb)) in 
-        self.momentum_weights.iter_mut().zip(d_weights.iter())
-        .zip(self.momentum_biases.iter_mut().zip(d_biases.iter()))
-        .zip(self.Velocity_weights.iter_mut().zip(self.Velocity_biases.iter_mut())){
+        for i in 0..d_weights.len() {
+            let mut mw = self.momentum_weights.get_mut(i);
+            let mut mb = self.momentum_biases.get_mut(i);
+            let mut vw = self.Velocity_weights.get_mut(i);
+            let mut vb = self.Velocity_biases.get_mut(i);
+            let dw = d_weights.get(i);
+            let db = d_biases.get(i);
 
-        for (m, g) in mw.iter_mut().zip(dw.iter()) {
-            *m = self.beta1 * *m + (1.0 - self.beta1) * *g;
-        }
+            mw.zip_mut_with(&dw, |m, g|{
+                *m = self.beta1 * *m + (1.0 - self.beta1) * *g
+            });
 
-        for (m, g) in mb.iter_mut().zip(db.iter()) {
-            *m = self.beta1 * *m + (1.0 - self.beta1) * *g;
-        }
+            mb.zip_mut_with(&db, |m, g|{
+                *m = self.beta1 * *m + (1.0 - self.beta1) * *g
+            });
 
-        for (v, g) in vw.iter_mut().zip(dw.iter()) {
-            *v = self.beta2 * *v + (1.0 - self.beta2) * g.powi(2);
-        }
+            vw.zip_mut_with(&dw, |v, g|{
+                *v = self.beta2 * *v + (1.0 - self.beta2) * g.powi(2)
+            });
 
-        for (v, g) in vb.iter_mut().zip(db.iter()) {
-            *v = self.beta2 * *v + (1.0 - self.beta2) * g.powi(2);
-        }
-
+            vb.zip_mut_with(&db, |v, g|{
+                *v = self.beta2 * *v + (1.0 - self.beta2) * g.powi(2)
+            });
         }
     }
 
-    pub fn run (&mut self,weights: &mut Vec<Array2<f32>>, biases:&mut Vec<Array1<f32>>,
-        d_weights:&Vec<Array2<f32>>, d_biases:&Vec<Array1<f32>>,
+    pub fn run (&mut self,weights: &mut PackedTensor2D, biases:&mut PackedTensor1D,
+        d_weights:&PackedTensor2D, d_biases:&PackedTensor1D,
         learning_rate:f32)
         {
             const EPSILON: f32 = 1e-7;
@@ -204,29 +188,33 @@ impl Adam {
             self.count_momentum_velocity(d_weights, d_biases);
             
             let t = self.iterasi as f32;
-            let beta1_correction = 1.0 - self.beta1.powf(t);
-            let beta2_correction = 1.0 - self.beta2.powf(t);
+            let bias_correction1 = 1.0 - self.beta1.powf(t);
+            let bias_correction2 = 1.0 - self.beta2.powf(t);
 
-            for ((((w, mw), vw), (b, mb)), vb) in 
-            weights.iter_mut().zip(self.momentum_weights.iter())
-            .zip(self.Velocity_weights.iter())
-            .zip(biases.iter_mut().zip(self.momentum_biases.iter()))
-            .zip(self.Velocity_biases.iter()) {
+            for i in 0..weights.len(){
+                let mw = self.momentum_weights.get(i);
+                let mb = self.momentum_biases.get(i);
+                let vw = self.Velocity_weights.get(i);
+                let vb = self.Velocity_biases.get(i);
+                let mut w = weights.get_mut(i);
+                let mut b = biases.get_mut(i);
 
-            for ((param, m), v) in w.iter_mut().zip(mw.iter()).zip(vw.iter()) {
-                let m_hat = m / beta1_correction;
-                let v_hat = v / beta2_correction;
-                *param -= learning_rate * m_hat / (v_hat.sqrt() + EPSILON);
+                ndarray::Zip::from(&mut w).and(mw).and(vw).for_each(
+                    |param, &m, &v| {
+                        let m_hat = m / bias_correction1;
+                        let v_hat = v / bias_correction2;
+                        *param -= learning_rate *m_hat / (v_hat.sqrt() + EPSILON) 
+                    }
+                );
+
+                ndarray::Zip::from(&mut b).and(mb).and(vb).for_each(
+                    |param, &m, &v| {
+                        let m_hat = m / bias_correction1;
+                        let v_hat = v / bias_correction2;
+                        *param -= learning_rate *m_hat / (v_hat.sqrt() + EPSILON) 
+                    }
+                );
             }
-
-            for ((param, m), v) in b.iter_mut().zip(mb.iter()).zip(vb.iter()) {
-                let m_hat = m / beta1_correction;
-                let v_hat = v / beta2_correction;
-                *param -= learning_rate * m_hat / (v_hat.sqrt() + EPSILON);
-            }
-
-        }
-
     }
 }
 
@@ -238,7 +226,7 @@ pub enum Optimizer {
 }
 
 impl Optimizer {
-    pub fn init(self,w: &mut Vec<Array2<f32>>, b: &mut Vec<Array1<f32>>) -> Self {
+    pub fn init(self,w: &mut PackedTensor2D, b: &mut PackedTensor1D) -> Self {
         match self {
             Optimizer::SGD => Optimizer::SGD,
             Optimizer::Momentum(m) => Optimizer::Momentum(Momentum::init(w, b, m.gamma)),
@@ -249,10 +237,10 @@ impl Optimizer {
     }
     pub fn run(
         &mut self,
-        w: &mut Vec<Array2<f32>>,
-        b: &mut Vec<Array1<f32>>,
-        dW: &Vec<Array2<f32>>,
-        db: &Vec<Array1<f32>>,
+        w: &mut PackedTensor2D,
+        b: &mut PackedTensor1D,
+        dW: &PackedTensor2D,
+        db: &PackedTensor1D,
         lr: f32
     ) {
         match self {

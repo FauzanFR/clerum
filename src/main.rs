@@ -1,17 +1,17 @@
-use clerum::{activation::ActivationConfig, file::run_cler, helper::rand_arr2d, loss::LossConfig, optimizer::OptimizerConfig, FNN};
+use clerum::{activation::ActivationConfig, file::run_cler, helper::{rand_arr2d, set_global_seed}, loss::LossConfig, optimizer::OptimizerConfig, FNN};
 use ndarray::{array, Array2};
 
 fn main() {
     // 1. Data Preparation
     // -----------------
-    // Generate random data: 10 samples, 2 features
-    let x: Array2<f32> = rand_arr2d(10, 2);
+    // Generate random data: 100 samples, 2 features
+    let x: Array2<f32> = rand_arr2d(100, 2);
     
     // Input for prediction after training
     let input = array![[0.2, 0.0]];
     
    // Class labels: 2 and 3
-    let labels = vec![3, 2];
+    let labels = vec![2, 3];
 
     // Create a one-hot encoded target
     let mut y_array = Array2::zeros((x.nrows(), labels.len()));
@@ -26,6 +26,9 @@ fn main() {
     // ---------------------
     let mut model = FNN::init(x, y_array);
     
+    // Set seed
+    set_global_seed(42);
+
     // Add a network layer:
     model.add_layer(2, 16, ActivationConfig::LeakyReLU(0.01));      // Input: 2 features
     model.add_layer(16, 8, ActivationConfig::LeakyReLU(0.01));      // Hidden layer
@@ -38,7 +41,7 @@ fn main() {
     // -----------------
     model.train(
         0.01,                                      // Learning rate
-        30,                                     // Epochs
+        60,                                     // Epochs
         LossConfig::CrossEntropy,           // Loss function
         true,                                // Use pretraining?
         0.1,                           // Pretrain data ratio
@@ -50,7 +53,7 @@ fn main() {
 
     // 4. Prediction
     // ------------
-    match run_cler("model.clr", input, 0.75) {
+    match run_cler("model.clr", input, 0.50) {
         Some((idx, confidence)) => {
             println!("Prediction: Class {} | Confidence: {:.2}%", idx, confidence * 100.0)
         },

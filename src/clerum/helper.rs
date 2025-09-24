@@ -1,18 +1,41 @@
-use std::borrow::Cow;
-
+use std::{borrow::Cow, sync::{Mutex, LazyLock}};
 use ndarray::{s, Array1, Array2, ArrayView2};
+use rand::SeedableRng;
+use rand_chacha::ChaCha8Rng;
 use rand_distr::{Normal, Distribution};
+
+static SEEDED_RNG: LazyLock<Mutex<ChaCha8Rng>> = LazyLock::new(|| {
+    Mutex::new(ChaCha8Rng::seed_from_u64(42))  // Default seed
+});
+
+pub fn set_global_seed(seed: u64) {
+    let mut rng = SEEDED_RNG.lock().unwrap();
+    *rng = ChaCha8Rng::seed_from_u64(seed);
+}
+
+pub fn rand_arr1d(x:usize) -> Array1<f32> {
+    let normal:Normal<f32> = Normal::new(0.0, 1.0).unwrap();
+    let mut rng = SEEDED_RNG.lock().unwrap();
+
+    Array1::from_shape_fn(x, |_| normal.sample(&mut rng))
+}
 
 pub fn rand_arr2d(x:usize, y:usize) -> Array2<f32> {
     let normal:Normal<f32> = Normal::new(0.0, 1.0).unwrap();
-    let mut rng = rand::rng();
+    let mut rng = SEEDED_RNG.lock().unwrap();
     Array2::from_shape_fn((x,y), |_| normal.sample(&mut rng))
 }
 
-pub fn _rand_arr1d(x:usize) -> Array1<f32> {
-    let normal:Normal<f32> = Normal::new(0.0, 1.0).unwrap();
-    let mut rng = rand::rng();
+pub fn rand_arr1d_seeded(x: usize, seed: u64) -> Array1<f32> {
+    let normal: Normal<f32> = Normal::new(0.0, 1.0).unwrap();
+    let mut rng = ChaCha8Rng::seed_from_u64(seed);
     Array1::from_shape_fn(x, |_| normal.sample(&mut rng))
+}
+
+pub fn rand_arr2d_seeded(x: usize, y: usize, seed: u64) -> Array2<f32> {
+    let normal: Normal<f32> = Normal::new(0.0, 1.0).unwrap();
+    let mut rng = ChaCha8Rng::seed_from_u64(seed);
+    Array2::from_shape_fn((x, y), |_| normal.sample(&mut rng))
 }
 
 pub fn _rand_vec2d(x:usize, y:usize) -> Vec<Vec<f32>> {
@@ -21,7 +44,7 @@ pub fn _rand_vec2d(x:usize, y:usize) -> Vec<Vec<f32>> {
 
 pub fn _rand_vec1d(x:usize) -> Vec<f32> {
     let normal:Normal<f32> = Normal::new(0.0, 1.0).unwrap();
-    let mut rng = rand::rng();
+    let mut rng = SEEDED_RNG.lock().unwrap();
     (0..x).map(|_| normal.sample(&mut rng)).collect()
 }
 

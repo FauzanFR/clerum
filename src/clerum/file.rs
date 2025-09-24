@@ -1,8 +1,9 @@
 use std::fs::File;
 
-use ndarray::{Array1, Array2};
+use ndarray::Array2;
 use serde::{Deserialize, Serialize};
 use bincode;
+use TensorClerum::{tensor1::{PackedTensor1D, PackedTensor1DStorage}, tensor2::{PackedTensor2D, PackedTensor2DStorage}};
 
 use super::activation::Activation;
 
@@ -10,8 +11,8 @@ use super::activation::Activation;
 pub struct Checkpoint {
     pub(crate) epoch: usize,
     pub(crate) loss: f32,
-    pub(crate) weights: Vec<Array2<f32>>,
-    pub(crate) biases: Vec<Array1<f32>>,
+    pub(crate) weights: PackedTensor2DStorage,
+    pub(crate) biases: PackedTensor1DStorage,
     pub(crate) activation_id: Vec<usize>,
     pub(crate) data_act:Vec<f32>,
     pub(crate) loss_id: usize,
@@ -33,10 +34,12 @@ pub fn load_checkpoint(path: &str) -> std::io::Result<Checkpoint> {
 pub fn run_cler(checkpoint_path: &str, input: Array2<f32>, confidence_threshold: f32) -> Option<(usize, f32)> {
     let clr = load_checkpoint(checkpoint_path).expect("Failed to load checkpoint");
     let mut X = input;
-    let layer = clr.weights.len();
+    let weight  = PackedTensor2D::import(clr.weights);
+    let biases  = PackedTensor1D::import(clr.biases);
+    let layer = weight.len();
 
     for i in 0..layer {
-        X = X.dot(&clr.weights[i]) + &clr.biases[i];
+        X = X.dot(&weight.get(i)) + &biases.get(i);
         let act = Activation::from_id(clr.activation_id[i], false, clr.data_act[i]);
         X = act.activate(X.view());
     }

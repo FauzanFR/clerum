@@ -25,13 +25,13 @@ clerum = { git = "https://github.com/FauzanFR/clerum.git" }
 ### Classification Example
 
 ```rust
-use clerum::{activation::ActivationConfig, file::run_cler, helper::rand_arr2d, 
+use clerum::{activation::ActivationConfig, file::run_cler, helper::{rand_arr2d, set_global_seed}, 
              loss::LossConfig, optimizer::OptimizerConfig, FNN};
 use ndarray::{array, Array2};
 
 fn main() {
-    // Generate random data: 10 samples, 2 features
-    let x: Array2<f32> = rand_arr2d(10, 2);
+    // Generate random data: 100 samples, 2 features
+    let x: Array2<f32> = rand_arr2d(100, 2);
     
     // Input for prediction
     let input = array![[0.2, 0.0]];
@@ -50,6 +50,9 @@ fn main() {
     // Initialize model
     let mut model = FNN::init(x, y_array);
     
+    // Set seed
+    set_global_seed(42);
+    
     // Add layers
     model.add_layer(2, 16, ActivationConfig::LeakyReLU(0.01));
     model.add_layer(16, 8, ActivationConfig::LeakyReLU(0.01));
@@ -61,7 +64,7 @@ fn main() {
     // Train model
     model.train(
         0.01,                   // Learning rate
-        30,                     // Epochs
+        60,                     // Epochs
         LossConfig::CrossEntropy, // Loss function
         true,                   // Use pretraining
         0.1,                    // Pretrain data ratio
@@ -72,7 +75,7 @@ fn main() {
     );
 
     // Make prediction
-    match run_cler("model.clr", input, 0.75) {
+    match run_cler("model.clr", input, 0.50) {
         Some((idx, confidence)) => {
             println!("Prediction: Class {} | Confidence: {:.2}%", idx, confidence * 100.0)
         },
@@ -86,6 +89,9 @@ fn main() {
 
 // Create regression targets
 let y = x.map_axis(ndarray::Axis(1), |row| row[0] + row[1]).insert_axis(ndarray::Axis(1));
+
+// Set seed
+set_global_seed(42);
 
 let mut model = FNN::init(x, y);
 model.add_layer(2, 16, ActivationConfig::LeakyReLU(0.01));
@@ -185,15 +191,15 @@ The saved checkpoint contains the following internal state
 
 ```rust
 pub struct Checkpoint {
-    epoch: usize,              // Last trained epoch
-    loss: f32,                 // Final loss value
-    weights: Vec<Array2<f32>>, // All weights for each layer
-    biases: Vec<Array1<f32>>,  // All biases for each layer
-    activation_id: Vec<usize>, // Activation function IDs per layer
-    data_act: Vec<f32>,        // Extra activation config (e.g., LeakyReLU alpha)
-    loss_id: usize,            // Loss function ID
-    data_loss: f32,            // Extra loss config (e.g., Huber delta)
-    labels: Vec<i32>,          // Label mapping (classification only)
+    epoch: usize,                   // Last trained epoch
+    loss: f32,                      // Final loss value
+    weights: PackedTensor2DStorage, // All weights for each layer
+    biases: PackedTensor1DStorage,  // All biases for each layer
+    activation_id: Vec<usize>,      // Activation function IDs per layer
+    data_act: Vec<f32>,             // Extra activation config (e.g., LeakyReLU alpha)
+    loss_id: usize,                 // Loss function ID
+    data_loss: f32,                 // Extra loss config (e.g., Huber delta)
+    labels: Vec<i32>,               // Label mapping (classification only)
 }
 ```
 You can freely change the loss function and optimizer during retraining.

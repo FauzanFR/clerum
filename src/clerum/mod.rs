@@ -8,15 +8,16 @@ pub mod loss;
 pub mod optimizer;
 
 use ndarray::{s, Array1, Array2, ArrayView2, Axis};
+use std::ops::AddAssign;
 use rayon::prelude::*;
+use TensorClerum::{tensor1::PackedTensor1D, tensor2::PackedTensor2D};
 
-use crate::{clerum::{activation::{Activation, ActivationConfig}, file::{save_checkpoint, Checkpoint}, helper::{clr_format, rand_arr2d, split_range}, loss::{LossConfig, LossMode}, optimizer::{Adam, Momentum, Optimizer, OptimizerConfig, RMSprop}}, file::load_checkpoint};
-
+use crate::{clerum::{activation::{Activation, ActivationConfig}, file::{save_checkpoint, Checkpoint}, helper::{clr_format, rand_arr2d, split_range}, loss::{LossConfig, LossMode}, optimizer::{Adam, Momentum, Optimizer, OptimizerConfig, RMSprop}}, file::load_checkpoint, helper::rand_arr1d};
 pub struct FNN{
     X:Array2<f32>,
     y:Array2<f32>,
-    w: Vec<Array2<f32>>,
-    b: Vec<Array1<f32>>,
+    w: PackedTensor2D,
+    b: PackedTensor1D,
     input_dim: Vec<usize>,
     output_dim: Vec<usize>,
     activations: Vec<usize>,
@@ -28,7 +29,7 @@ pub struct FNN{
 impl FNN {
     pub fn init(X:Array2<f32>, y:Array2<f32>) -> Self {
         Self{
-            X: X, y: y, w:Vec::new(), b:Vec::new(),
+            X: X, y: y, w:PackedTensor2D::new(), b:PackedTensor1D::new(),
             input_dim:Vec::new(), output_dim:Vec::new(),
             activations:Vec::new(), data_act:Vec::new(),
             labels: Vec::new()
@@ -38,22 +39,32 @@ impl FNN {
     pub fn from_checkpoint(&mut self, path:&str) {
         let checkpoint = load_checkpoint(path).expect("Failed to load checkpoint");
 
-        self.w = checkpoint.weights;
-        self.b = checkpoint.biases;
+        self.w = PackedTensor2D::import(checkpoint.weights);
+        self.b = PackedTensor1D::import(checkpoint.biases);
         self.activations = checkpoint.activation_id;
         self.data_act = checkpoint.data_act;
         self.labels = checkpoint.labels;
 
-        for weight in &self.w {
-            let (x, y) = weight.dim();
+        for i in 0..self.w.len(){
+            let (x, y) = self.w.dim(i);
             self.input_dim.push(x);
             self.output_dim.push(y);
         }
     }
 
     pub fn add_layer(&mut self, input_dim:usize, output_dim:usize, activation:ActivationConfig) {
-        self.w.push(rand_arr2d(input_dim, output_dim));
-        self.b.push(Array1::zeros(output_dim));
+        self.w.push(rand_arr2d( output_dim, input_dim));
+        self.b.push(rand_arr1d(output_dim));
+        self.input_dim.push(input_dim);
+        self.output_dim.push(output_dim);
+        let (act_id, data_activation) = ActivationConfig::activation_id(activation);
+        self.activations.push(act_id);
+        self.data_act.push(data_activation);
+    }
+
+    pub fn add_layer_with_seed(&mut self, input_dim:usize, output_dim:usize, activation:ActivationConfig) {
+        self.w.push(rand_arr2d( output_dim, input_dim));
+        self.b.push(rand_arr1d(output_dim));
         self.input_dim.push(input_dim);
         self.output_dim.push(output_dim);
         let (act_id, data_activation) = ActivationConfig::activation_id(activation);
@@ -83,14 +94,12 @@ impl FNN {
         (0..max_core).map(|_| buffers.iter().map(|arr| arr.clone()).collect()).collect()
     }
 
-    fn build_backward_buffer_dW(&self) -> Vec<Array2<f32>>{
-        let dW: Vec<Array2<f32>> = self.w.iter().map(|w| Array2::zeros(w.raw_dim())).collect();
-        dW
+    fn build_backward_buffer_dW(&self) -> PackedTensor2D{
+        self.w.copy_and_fill(0.0)
     }
 
-    fn build_backward_buffer_db(&self) -> Vec<Array1<f32>>{
-        let db: Vec<Array1<f32>> = self.output_dim.iter().map(|&out_dim| Array1::zeros(out_dim)).collect();
-        db
+    fn build_backward_buffer_db(&self) -> PackedTensor1D{
+        self.b.copy_and_fill(0.0)
     }
 
     pub fn train(
@@ -105,6 +114,8 @@ impl FNN {
         path: &str,
         optimizer: OptimizerConfig
     ) {
+        self.b.process();
+        self.w.process();
         let max_core = if parallel_threads>0 && parallel_threads <= rayon::current_num_threads() {parallel_threads} else {rayon::current_num_threads()};
         let loss_id = LossConfig::loss_id(loss_mode);
  
@@ -155,8 +166,8 @@ impl FNN {
         &mut self,
         layer:usize,
         epochs:usize,
-        mut dW_buffer:Vec<Array2<f32>>,
-        mut db_buffer:Vec<Array1<f32>>,
+        mut dW_buffer:PackedTensor2D,
+        mut db_buffer:PackedTensor1D,
         lr:f32,
         mut z_cache_all_batch:Vec<Vec<Array2<f32>>>,
         mut a_cache_all_batch:Vec<Vec<Array2<f32>>>,
@@ -233,8 +244,8 @@ impl FNN {
 
                 a_batch[0].assign(&X_batch);
                 for l in 0..layer {
-                    z_batch[l].assign(&a_batch[l].dot(&w[l]));
-                    z_batch[l] += &b[l];
+                    z_batch[l].assign(&a_batch[l].dot(&w.get(l)));
+                    z_batch[l] += &b.get(l);
                     if l < layer - 1 {
                         a_batch[l + 1].assign(&act_deriv_activate(z_batch[l].view(), act_id[l], act_data[l]));
                     } else {
@@ -244,8 +255,8 @@ impl FNN {
                 let loss = loss_func.loss(&y_batch, &y_pred.view());
                 let mut dZ = dz_func.dz(&y_batch, &y_pred.view(), n);
 
-                let mut local_dW = vec![Array2::zeros(w[0].raw_dim()); layer];
-                let mut local_db = vec![Array1::zeros(b[0].raw_dim()); layer];
+                let mut local_dW = vec![Array2::zeros(w.dim(0)); layer];
+                let mut local_db = vec![Array1::zeros(b.dim(0)); layer];
 
                 for l in (0..layer).rev() {
                     local_dW[l] = a_batch[l].t().dot(&dZ);
@@ -253,27 +264,26 @@ impl FNN {
 
                     if l == 0 { break }
 
-                    let dA = dZ.dot(&w[l].t());
+                    let dA = dZ.dot(&w.get(l).t());
                     let grad = act_deriv_deriv(z_batch[l - 1].view(), act_id[l - 1], act_data[l-1]);
                     dZ = dA * grad
 
                 }
-
 
                 (loss, local_dW, local_db)
                 
             }).collect();
 
             for i in 0..layer {
-                dW_buffer[i].fill(0.0);
-                db_buffer[i].fill(0.0);
+                dW_buffer.get_mut(i).fill(0.0);
+                db_buffer.get_mut(i).fill(0.0);
             }
 
             for (loss, local_dW, local_db) in results{
                 epoch_loss += loss;
                 for i in 0..layer {
-                    dW_buffer[i] += &local_dW[i];
-                    db_buffer[i] += &local_db[i];
+                    dW_buffer.get_mut(i).add_assign(&local_dW[i]);
+                    db_buffer.get_mut(i).add_assign(&local_db[i]);
                 }
             }
 
@@ -290,8 +300,8 @@ impl FNN {
                     let clr = Checkpoint{
                         epoch,
                         loss:best_loss, 
-                        weights:w.to_vec(),
-                        biases:b.to_vec(),
+                        weights:w.export(),
+                        biases:b.export(),
                         activation_id:act_id.to_vec(),
                         data_act:act_data.to_vec(),
                         loss_id:loss_id,
