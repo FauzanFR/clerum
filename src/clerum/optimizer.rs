@@ -15,7 +15,7 @@ pub struct Momentum{
 
 impl Momentum{
 
-    pub fn init (weights: &mut PackedTensor2D, biases:&mut PackedTensor1D, gamma:f32) -> Self {
+    pub fn init (weights: &PackedTensor2D, biases:&PackedTensor1D, gamma:f32) -> Self {
         let Velocity_weights = weights.copy_and_fill(0.0);
         let Velocity_biases = biases.copy_and_fill(0.0);
 
@@ -59,7 +59,7 @@ pub struct RMSprop{
 }
 
 impl  RMSprop {
-    pub fn init (weights: &mut PackedTensor2D, biases:&mut PackedTensor1D, gamma:f32) -> Self {
+    pub fn init (weights: &PackedTensor2D, biases:&PackedTensor1D, gamma:f32) -> Self {
         let cache_weights = weights.copy_and_fill(0.0);
         let cache_biases = biases.copy_and_fill(0.0);
 
@@ -133,7 +133,7 @@ pub struct  Adam{
 }
 
 impl Adam {
-    pub fn init (weights: &mut PackedTensor2D, biases:&mut PackedTensor1D, beta1:f32, beta2:f32, iterasi:i32) -> Self {
+    pub fn init (weights: &PackedTensor2D, biases:&PackedTensor1D, beta1:f32, beta2:f32, iterasi:i32) -> Self {
 
         let momentum_weights = weights.copy_and_fill(0.0);
         let momentum_biases = biases.copy_and_fill(0.0);
@@ -226,7 +226,7 @@ pub enum Optimizer {
 }
 
 impl Optimizer {
-    pub fn init(self,w: &mut PackedTensor2D, b: &mut PackedTensor1D) -> Self {
+    pub fn init(self,w: &PackedTensor2D, b: &PackedTensor1D) -> Self {
         match self {
             Optimizer::SGD => Optimizer::SGD,
             Optimizer::Momentum(m) => Optimizer::Momentum(Momentum::init(w, b, m.gamma)),

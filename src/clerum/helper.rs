@@ -1,5 +1,5 @@
 use std::{borrow::Cow, sync::{Mutex, LazyLock}};
-use ndarray::{s, Array1, Array2, ArrayView2};
+use ndarray::{s, Array1, Array2, Array3, ArrayView2};
 use rand::SeedableRng;
 use rand_chacha::ChaCha8Rng;
 use rand_distr::{Normal, Distribution};
@@ -24,6 +24,12 @@ pub fn rand_arr2d(x:usize, y:usize) -> Array2<f32> {
     let normal:Normal<f32> = Normal::new(0.0, 1.0).unwrap();
     let mut rng = SEEDED_RNG.lock().unwrap();
     Array2::from_shape_fn((x,y), |_| normal.sample(&mut rng))
+}
+
+pub fn rand_arr3d(x:usize, y:usize, z:usize) -> Array3<f32> {
+    let normal:Normal<f32> = Normal::new(0.0, 1.0).unwrap();
+    let mut rng = SEEDED_RNG.lock().unwrap();
+    Array3::from_shape_fn((x,y,z), |_| normal.sample(&mut rng))
 }
 
 pub fn rand_arr1d_seeded(x: usize, seed: u64) -> Array1<f32> {
@@ -65,7 +71,6 @@ pub fn sign_scalar(v: f32) -> f32 {
         0.0
     }
 }
-
 
 pub fn binary_crossentropy(y_true: &ArrayView2<f32>, y_pred: &ArrayView2<f32>) -> f32 {
     const EPSILON: f32 = 1e-7;
