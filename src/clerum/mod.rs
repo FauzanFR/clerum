@@ -781,9 +781,5 @@ impl RNN {
             RNN::sgd_update(&mut self.w_xh, &mut self.w_hh, &mut self.b_h, &mut self.w_hy, &mut self.b_y, &dW_xh, &dW_hh, &dW_hy, &db_h, &db_y, lr);
             println!("{}", loss)
         }
-
-        
-    
     }
-
 }
