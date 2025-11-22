@@ -1,18 +1,28 @@
 #![allow(non_snake_case, non_camel_case_types)]
 
-
 pub mod activation;
 pub mod file;
 pub mod helper;
 pub mod loss;
 pub mod optimizer;
 
-use ndarray::{s, Array1, Array2, Array3, ArrayView2, ArrayViewMut2, Axis, Ix2};
-use std::ops::AddAssign;
+use ndarray::{s, Array1, Array2, Array3, ArrayView2, ArrayViewMut2, Axis};
+use std::{iter::zip, ops::AddAssign};
 use rayon::prelude::*;
-use TensorClerum::{tensor1::PackedTensor1D, tensor2::PackedTensor2D};
+use TensorClerum::{tensor1::PackedTensor1D, tensor2::PackedTensor2D, TraceTensor2};
 
 use crate::{clerum::{activation::{Activation, ActivationConfig}, file::{save_checkpoint, Checkpoint}, helper::{clr_format, rand_arr2d, split_range}, loss::{LossConfig, LossMode}, optimizer::{Adam, Momentum, Optimizer, OptimizerConfig, RMSprop}}, file::load_checkpoint, helper::rand_arr1d};
+
+fn init_optimizer(w: &[&PackedTensor2D], b: &[&PackedTensor1D], config: &OptimizerConfig) -> Optimizer {
+    match config {
+        OptimizerConfig::SGD => Optimizer::SGD.init(w, b),
+        OptimizerConfig::Momentum(gamma) => Optimizer::Momentum(Momentum::init(w,b,*gamma)),
+        OptimizerConfig::RMSprop(gamma) => Optimizer::RMSprop(RMSprop::init(w,b, *gamma)),
+        OptimizerConfig::Adam(b1, b2) => Optimizer::Adam(Adam::init(w,b,*b1, *b2,0))
+    }
+}
+
+
 pub struct FNN{
     X:Array2<f32>,
     y:Array2<f32>,
@@ -92,6 +102,7 @@ impl FNN {
         pretrain_ratio: f32,
         pretrain_epochs: usize,
         parallel_threads: usize,
+        batch: usize,
         path: &str,
         optimizer: OptimizerConfig
     ) {
@@ -141,15 +152,6 @@ impl FNN {
             z, a, y_pred, false, 
             0,max_core, &clr_format(path),&optimizer,loss_id
         );
-    }
-
-    fn init_optimizer(w: &PackedTensor2D, b: &PackedTensor1D, config: &OptimizerConfig) -> Optimizer {
-        match config {
-            OptimizerConfig::SGD => Optimizer::SGD,
-            OptimizerConfig::Momentum(gamma) => Optimizer::Momentum(Momentum::init(w,b,*gamma)),
-            OptimizerConfig::RMSprop(gamma) => Optimizer::RMSprop(RMSprop::init(w,b, *gamma)),
-            OptimizerConfig::Adam(b1, b2) => Optimizer::Adam(Adam::init(w,b,*b1, *b2,0))
-        }.init(w, b)
     }
     
     fn forward_pass(
@@ -242,7 +244,7 @@ impl FNN {
             }
         }
     }
-
+    
     fn train_core(
         &mut self,
         layer:usize,
@@ -261,9 +263,6 @@ impl FNN {
         loss_id: (usize, f32)
     )
     {
-        let w= &mut self.w;
-        let b= &mut self.b;
-        
         let (loss_id, data_loss) = loss_id;
         let act_id:&Vec<usize> = &self.activations;
         let act_data:&Vec<f32> = &self.data_act;
@@ -288,7 +287,7 @@ impl FNN {
         let dz_func = LossMode::from_id(loss_id, true, data_loss);
         let total = self.X.nrows();
 
-        let mut optimizer = FNN::init_optimizer(&w,&b,optimizer); 
+        let mut optimizer = init_optimizer(&vec![&self.w],&vec![&self.b],optimizer); 
 
         for epoch in 0..epochs{
             let chunks = split_range(total, max_core);
@@ -313,15 +312,15 @@ impl FNN {
 
                 a_batch[0].assign(&X_batch);
                 
-                FNN::forward_pass(layer, w, b, &mut a_batch, &mut z_batch, &mut y_pred, act_id, act_data, &act_deriv_activate);
+                FNN::forward_pass(layer, &self.w, &self.b, &mut a_batch, &mut z_batch, &mut y_pred, act_id, act_data, &act_deriv_activate);
 
                 let loss = loss_func.loss(&y_batch, &y_pred.view());
                 let mut dZ = dz_func.dz(&y_batch, &y_pred.view(), n);
 
-                let mut local_dW = vec![Array2::zeros(w.dim(0)); layer];
-                let mut local_db = vec![Array1::zeros(b.dim(0)); layer];
+                let mut local_dW = vec![Array2::zeros(self.w.dim(0)); layer];
+                let mut local_db = vec![Array1::zeros(self.b.dim(0)); layer];
 
-                FNN::backward_pass(layer, w, &mut a_batch, &mut z_batch, &mut local_dW, &mut local_db, act_id, act_data, &mut dZ, &act_deriv_deriv);
+                FNN::backward_pass(layer, &self.w, &mut a_batch, &mut z_batch, &mut local_dW, &mut local_db, act_id, act_data, &mut dZ, &act_deriv_deriv);
 
                 (loss, local_dW, local_db)
                 
@@ -338,9 +337,9 @@ impl FNN {
                 }
             }
 
-            optimizer.run(w, b, &dW_buffer, &db_buffer, lr);
+            optimizer.run(&mut vec![&mut self.w], &mut vec![&mut self.b], &vec![&dW_buffer], &vec![&db_buffer], lr);
 
-            FNN::maybe_save_checkpoint(epoch_loss, max_core, &mut best_loss, epoch, epochs, pretrain, &mut count_save, w, b, act_id, act_data, loss_id, data_loss, &self.labels, path);
+            FNN::maybe_save_checkpoint(epoch_loss, max_core, &mut best_loss, epoch, epochs, pretrain, &mut count_save, &self.w, &self.b, act_id, act_data, loss_id, data_loss, &self.labels, path);
             count_save +=1;
 
             let grad_norm = dW_buffer.iter().map(|dw| dw.mapv(|x| x.powi(2)).sum()).sum::<f32>().sqrt();
@@ -353,8 +352,8 @@ impl FNN {
             );
         }
     }
-    
 }
+
 
 #[derive(Debug, Clone, Copy)]
 pub enum RNNTask {
@@ -362,7 +361,7 @@ pub enum RNNTask {
     SequenceToSequence, // y_3d digunakan, y_2d kosong
 }
 
-enum Input_y {
+pub enum Input_y {
     Array2(Array2<f32>),
     Array3(Array3<f32>),
 }
@@ -398,12 +397,14 @@ pub struct RNN {
     sequence_length: usize,
 }
 
-
-
 impl RNN {
-    pub fn init<I>(X:Array3<f32>, y: I, sequence_length: usize) -> Self 
+    pub fn init<I>(X:Array3<f32>, y: I, sequence_length: Option<usize>) -> Self 
     where I: Into<Input_y>
     {
+        let sequence_length = match sequence_length {
+            Some(v) => v,
+            None => X.shape()[1]
+        };
 
         let (y_2d, y_3d, task_type) = match y.into() {
             Input_y::Array2(x) => (x, Array3::zeros((0, 0, 0)), RNNTask::SequenceToVector),
@@ -511,7 +512,7 @@ impl RNN {
         } else {
             rayon::current_num_threads()
         };
-    self.train_core(loss_id, epoch, lr, max_norm);
+    self.train_core(loss_id, epoch, lr, max_norm, max_core, &optimizer);
     }
 
     fn calculate_loss(task_type:&RNNTask, outputs: &[Array2<f32>], loss_func: &LossMode, dz_func:&LossMode, y_2d: &Array2<f32>, y_3d: &Array3<f32>) -> (f32, Vec<Array2<f32>>) {
@@ -533,7 +534,6 @@ impl RNN {
     }
 
     fn calculate_loss_3d(outputs: &[Array2<f32>], y_3d: &Array3<f32>, loss_func: &LossMode, dz_func: &LossMode) -> (f32, Vec<Array2<f32>>) {
-        // Reshape logic yang tadi kita bahas
         let batch_size = outputs[0].shape()[0];
         let seq_len = outputs.len();
         let output_dim = outputs[0].shape()[1];
@@ -587,7 +587,7 @@ impl RNN {
 
             for l in 0..num_layers {
                 let h_prev = if t > 0 {&hidden_states[l][t-1]} else {&Array2::zeros(hidden_states[l][t].dim())};
-                let wxh_term = &x_t.dot(&w_xh.get(l));
+                let wxh_term = &x_t.dot(&w_xh.get(l).t()); 
                 let whh_term = &h_prev.dot(&w_hh.get(l).t());
                 let h_t = wxh_term + whh_term + &b_h.get(l);
                 let h_t_activated = act_deriv_activate(h_t.view(), act_id[l], act_data[l]);
@@ -602,6 +602,7 @@ impl RNN {
         outputs
     }
 
+    
     fn backward (
         X:&Array3<f32>,
         hidden_states: &Vec<Vec<Array2<f32>>>,
@@ -649,7 +650,7 @@ impl RNN {
                 };
 
                 let grad_xh = dz.t().dot(&input_for_layer);
-                dW_xh.get_mut(l).add_assign(&grad_xh.t());
+                dW_xh.get_mut(l).add_assign(&grad_xh);
 
                 if t > 0 {
                     let h_prev = &hidden_states[l][t-1];
@@ -661,7 +662,7 @@ impl RNN {
                 db_h.get_mut(l).assign(&sum);
                 
                 if l > 0 {
-                    dh = dz.dot(&w_xh.get(l).t());
+                    dh = dz.dot(&w_xh.get(l));
                 }
                 if t > 0 {
                     dh_next[l] = dz.dot(&w_hh.get(l));
@@ -704,7 +705,7 @@ impl RNN {
             dW_hy.get_mut(0).mapv_inplace(|x| x * scale_factor);
             db_y.get_mut(0).mapv_inplace(|x| x * scale_factor);
             
-            // println!("Gradients clipped: norm {:.4} -> {:.4}", total_norm, max_norm);
+            println!("Gradients clipped: norm {:.4} -> {:.4}", total_norm, max_norm);
         }
         
         total_norm
@@ -740,7 +741,10 @@ impl RNN {
         loss_id: (usize, f32),
         epoch: usize,
         lr: f32,
-        max_norm: f32
+        max_norm: f32,
+        max_core: usize,
+        optimizer: &OptimizerConfig
+
     ){
         let (loss_id, data_loss) = loss_id;
         let act_id:&Vec<usize> = &self.activations;
@@ -758,7 +762,7 @@ impl RNN {
         let dz_func = LossMode::from_id(loss_id, true, data_loss);
         
         let batch_size = self.X.shape()[0];
-        let seq_len = self.X.shape()[1];
+        let seq_len = self.sequence_length;
         let num_layers = self.w_hh.len();
         let mut all_hidden_states = Vec::new();
         for l in 0..num_layers {
@@ -772,13 +776,15 @@ impl RNN {
         let mut db_h = self.b_h.copy_and_fill(0.0);
         let mut db_y = self.b_y.copy_and_fill(0.0);
         let mut dh_next: Vec<Array2<f32>> = vec![Array2::zeros((batch_size, self.hidden_dim[0])); num_layers];
+        let mut optimizer = init_optimizer(&vec![&self.w_xh, &self.w_hh, &self.w_hy],&vec![&self.b_h, &self.b_y],optimizer); 
 
         for _ in 0..epoch{
             let outputs = RNN::forward(&self.X, &self.w_xh, &self.w_hh, &self.b_h, &self.w_hy, &self.b_y, seq_len, num_layers, &mut all_hidden_states, act_id, act_data, &act_deriv_activate);
             let (loss, dZ) = RNN::calculate_loss(&self.task_type, &outputs, &loss_func, &dz_func, &self.y_2d, &self.y_3d);
             RNN::backward(&self.X, &all_hidden_states, &mut dW_hy, &dZ, &mut db_y, &self.w_hy, &mut dh_next, &mut dW_xh, &mut dW_hh, &mut db_h, &self.w_xh, &self.w_hh, seq_len, num_layers, act_id, act_data, &act_deriv_deriv);
             RNN::clip_gradients_by_norm(&mut dW_xh, &mut dW_hh, &mut dW_hy, &mut db_h, &mut db_y, max_norm);
-            RNN::sgd_update(&mut self.w_xh, &mut self.w_hh, &mut self.b_h, &mut self.w_hy, &mut self.b_y, &dW_xh, &dW_hh, &dW_hy, &db_h, &db_y, lr);
+            optimizer.run(&mut vec![&mut self.w_xh, &mut self.w_hh, &mut self.w_hy],&mut vec![&mut self.b_h, &mut self.b_y], &vec![&dW_xh, &dW_hh, &dW_hy],&vec![&db_h, &db_y], lr);
+            // RNN::sgd_update(&mut self.w_xh, &mut self.w_hh, &mut self.b_h, &mut self.w_hy, &mut self.b_y, &dW_xh, &dW_hh, &dW_hy, &db_h, &db_y, lr);
             println!("{}", loss)
         }
     }

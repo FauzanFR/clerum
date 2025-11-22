@@ -1,11 +1,13 @@
-use clerum::{activation::{self, ActivationConfig}, file::run_cler, helper::{rand_arr2d, rand_arr3d, set_global_seed}, loss::LossConfig, optimizer::OptimizerConfig, FNN, RNN};
+use std::f32::consts::PI;
+
+use clerum::{activation::{ActivationConfig}, file::run_cler, helper::{rand_arr2d, rand_arr3d, set_global_seed}, loss::LossConfig, optimizer::OptimizerConfig, FNN, RNN};
 use ndarray::{array, Array2, Array3, ArrayD};
 
 // fn main() {
 //     // 1. Data Preparation
 //     // -----------------
 //     // Generate random data: 100 samples, 2 features
-//     let x: Array2<f32> = rand_arr2d(100, 2);
+//     let x: Array2<f32> = rand_arr2d(10000, 2);
     
 //     // Input for prediction after training
 //     let input = array![[0.2, 0.0]];
@@ -47,6 +49,7 @@ use ndarray::{array, Array2, Array3, ArrayD};
 //         0.1,                           // Pretrain data ratio
 //         5,                            // Epoch pretrain
 //         4,                           // Thread paralel
+//         1,
 //         "model.clr",                             // Model file name
 //         OptimizerConfig::Adam(0.9, 0.999)   // Optimizer Adam
 //     );
@@ -88,12 +91,48 @@ fn create_timeseries_data() -> (Array3<f32>, Array3<f32>) {
     (X, y)
 }
 
-fn main(){
-    let (x,y) = create_timeseries_data();
-    
-    let mut model = RNN::init(x, y, 6);
-    model.add_layer(1, 8, ActivationConfig::Tanh);
-    model.add_layer(8, 4, ActivationConfig::ReLU);
-    model.set_output_layer(1); 
-    model.train(0.01, 5.0, 40, LossConfig::Huber(0.01), false, 0.0, 0, 0, "a", OptimizerConfig::SGD);
+fn main() {
+    // Parameter utama
+    let samples = 100;
+    let steps = 20;
+    let features = 1;
+
+    // Tempat data mentah
+    let mut data = Vec::new();
+
+    for s in 0..samples {
+        for t in 0..steps {
+            let val = match s {
+                0 => (t as f32 * PI / 6.0).sin(),
+                1 => (t as f32 * PI / 6.0 + PI / 2.0).sin(),
+                2 => t as f32 / (steps as f32 - 1.0),
+                _ => 0.0,
+            };
+            data.push(val);
+        }
+    }
+
+    let mut ydata = Vec::new();
+
+    for s in 0..samples {
+        for t in 0..steps {
+            let val = match s {
+                0 => ((t + 1) as f32 * PI / 6.0).sin(),
+                1 => ((t + 1) as f32 * PI / 6.0 + PI / 2.0).sin(),
+                2 => ((t + 1).min(steps - 1)) as f32 / (steps as f32 - 1.0),
+                _ => 0.0,
+            };
+            ydata.push(val);
+        }
+    }
+
+    let y = Array3::from_shape_vec((samples, steps, features), ydata).unwrap();
+    let X = Array3::from_shape_vec((samples, steps, features), data).unwrap();
+
+    let mut model = RNN::init(X, y, None);
+    model.add_layer(1, 4, ActivationConfig::Tanh);
+    model.add_layer(4, 7, ActivationConfig::ReLU);
+    model.add_layer(7, 5, ActivationConfig::LeakyReLU(0.1));
+    model.set_output_layer(5);
+    model.train(0.01, 10.0, 40, LossConfig::Huber(0.1), false, 0.0, 0, 0, "a", OptimizerConfig::Adam(0.9, 0.999));
 }
