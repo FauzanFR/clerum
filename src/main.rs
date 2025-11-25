@@ -1,13 +1,13 @@
 use std::f32::consts::PI;
 
-use clerum::{activation::{ActivationConfig}, file::run_cler, helper::{rand_arr2d, rand_arr3d, set_global_seed}, loss::LossConfig, optimizer::OptimizerConfig, FNN, RNN};
-use ndarray::{array, Array2, Array3, ArrayD};
+use clerum::{FNN::{self, BatchConfig, PretrainConfig}, RNN, activation::ActivationConfig, file::{Input_X, run_cler}, helper::{rand_arr2d, rand_arr3d, set_global_seed}, loss::LossConfig, optimizer::OptimizerConfig};
+use ndarray::{Array2, Array3, ArrayD, array, s};
 
 // fn main() {
 //     // 1. Data Preparation
 //     // -----------------
 //     // Generate random data: 100 samples, 2 features
-//     let x: Array2<f32> = rand_arr2d(10000, 2);
+//     let x: Array2<f32> = rand_arr2d(100, 2);
     
 //     // Input for prediction after training
 //     let input = array![[0.2, 0.0]];
@@ -26,7 +26,7 @@ use ndarray::{array, Array2, Array3, ArrayD};
     
 //     // 2. Model Initialization
 //     // ---------------------
-//     let mut model = FNN::init(x, y_array);
+//     let mut model = FNN::FNN::init(x, y_array);
     
 //     // Set seed
 //     set_global_seed(42);
@@ -45,11 +45,8 @@ use ndarray::{array, Array2, Array3, ArrayD};
 //         0.01,                                      // Learning rate
 //         60,                                     // Epochs
 //         LossConfig::CrossEntropy,           // Loss function
-//         true,                                // Use pretraining?
-//         0.1,                           // Pretrain data ratio
-//         5,                            // Epoch pretrain
-//         4,                           // Thread paralel
-//         1,
+//         PretrainConfig::Partial { data_ratio: 0.1, epochs: 6 },
+//         BatchConfig::Sequential,
 //         "model.clr",                             // Model file name
 //         OptimizerConfig::Adam(0.9, 0.999)   // Optimizer Adam
 //     );
@@ -64,32 +61,7 @@ use ndarray::{array, Array2, Array3, ArrayD};
 //     }
 // }
 
-fn create_timeseries_data() -> (Array3<f32>, Array3<f32>) {
-    let batch_size = 3;
-    let seq_len = 6;
-    let input_dim = 1;
-    let output_dim = 1;
-    
-    // X: Sine waves dengan phase berbeda
-    let X = array![
-        // Sample 1: Sine wave phase 0
-        [[0.0], [0.5], [0.87], [1.0], [0.87], [0.5]],
-        // Sample 2: Sine wave phase 90  
-        [[1.0], [0.87], [0.5], [0.0], [-0.5], [-0.87]],
-        // Sample 3: Ramp function
-        [[0.0], [0.2], [0.4], [0.6], [0.8], [1.0]],
-    ].into_dyn().into_dimensionality::<ndarray::Ix3>().unwrap();
 
-    // y: Next value prediction (shifted by 1)
-    let y = array![
-        // Predict next value in sequence
-        [[0.5], [0.87], [1.0], [0.87], [0.5], [0.0]],   // Sample 1 shifted
-        [[0.87], [0.5], [0.0], [-0.5], [-0.87], [-1.0]], // Sample 2 shifted  
-        [[0.2], [0.4], [0.6], [0.8], [1.0], [1.0]],     // Sample 3 shifted
-    ];
-
-    (X, y)
-}
 
 fn main() {
     // Parameter utama
@@ -129,10 +101,14 @@ fn main() {
     let y = Array3::from_shape_vec((samples, steps, features), ydata).unwrap();
     let X = Array3::from_shape_vec((samples, steps, features), data).unwrap();
 
-    let mut model = RNN::init(X, y, None);
-    model.add_layer(1, 4, ActivationConfig::Tanh);
-    model.add_layer(4, 7, ActivationConfig::ReLU);
-    model.add_layer(7, 5, ActivationConfig::LeakyReLU(0.1));
-    model.set_output_layer(5);
-    model.train(0.01, 10.0, 40, LossConfig::Huber(0.1), false, 0.0, 0, 0, "a", OptimizerConfig::Adam(0.9, 0.999));
+    // let mut model = RNN::RNN::init(X, y, None);
+    // model.add_layer(1, 4, ActivationConfig::Tanh);
+    // model.add_layer(4, 7, ActivationConfig::ReLU);
+    // model.add_layer(7, 5, ActivationConfig::LeakyReLU(0.1));
+    // model.add_layer(5, 5, ActivationConfig::Softmax);
+    // model.train(0.01, 10.0, 40, LossConfig::Huber(0.1), true, 0.1, 5, "test.clr", OptimizerConfig::Adam(0.9, 0.999));
+
+    run_cler("test.clr",Input_X::Array3(X), 0.70);
+
+    println!("y_true {:?}", y)
 }
