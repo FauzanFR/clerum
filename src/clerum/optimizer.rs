@@ -311,3 +311,12 @@ pub enum OptimizerConfig {
     RMSprop(f32),
     Adam(f32, f32),
 }
+
+pub fn init_optimizer(w: &[&PackedTensor2D], b: &[&PackedTensor1D], config: &OptimizerConfig) -> Optimizer {
+    match config {
+        OptimizerConfig::SGD => Optimizer::SGD.init(w, b),
+        OptimizerConfig::Momentum(gamma) => Optimizer::Momentum(Momentum::init(w,b,*gamma)),
+        OptimizerConfig::RMSprop(gamma) => Optimizer::RMSprop(RMSprop::init(w,b, *gamma)),
+        OptimizerConfig::Adam(b1, b2) => Optimizer::Adam(Adam::init(w,b,*b1, *b2,0))
+    }
+}
